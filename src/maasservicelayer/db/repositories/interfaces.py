@@ -49,6 +49,10 @@ class InterfaceClauseFactory(ClauseFactory):
     def with_switch_id(cls, switch_id: int) -> Clause:
         return Clause(condition=eq(InterfaceTable.c.switch_id, switch_id))
 
+    @classmethod
+    def with_switch_id_in(cls, switch_ids: list[int]) -> Clause:
+        return Clause(condition=InterfaceTable.c.switch_id.in_(switch_ids))
+
 
 def build_interface_links(
     interface: dict[str, list[dict[str, Any]]], reverse=True

@@ -64,6 +64,11 @@ option op125 code 125 = encapsulate vivso;
 {{endfor}}
 
 #
+# ZTP option definitions (used by host blocks)
+#
+{{ztp_provisioning}}
+
+#
 # Failover Peers
 #
 {{for failover_peer in failover_peers}}
@@ -159,6 +164,19 @@ shared-network {{shared_network["name"]}} {
               range {{pool['ip_range_low']}} {{pool['ip_range_high']}};
            }
            {{endfor}}
+
+           {{if ztp_only_hosts}}
+           {{for host in ztp_only_hosts}}
+host {{host['host']}}-{{host['mac'].replace(":", "-")}}-{{dhcp_subnet['subnet'].replace(".", "-").replace("/", "-")}} {
+   hardware ethernet {{host['mac']}};
+   {{if host.get('ztp_config')}}
+   if not (option user-class = "{{onie_user_class}}") {
+     option provision-url-{{host['ztp_config']['option_code']}} "{{host['ztp_config']['url']}}";
+   }
+   {{endif}}
+}
+           {{endfor}}
+           {{endif}}
     }
     {{endfor}}
 }
@@ -186,8 +204,16 @@ host {{host['host']}}-{{host['mac'].replace(":", "-")}} {
    {{endfor}}
    {{endfor}}
 
+   {{if host.get('ztp_config')}}
+   if not (option user-class = "{{onie_user_class}}") {
+     option provision-url-{{host['ztp_config']['option_code']}} "{{host['ztp_config']['url']}}";
+   }
+   {{endif}}
+
    hardware ethernet {{host['mac']}};
+   {{if host.get('ip')}}
    fixed-address {{host['ip']}};
+   {{endif}}
 }
 {{endfor}}
 

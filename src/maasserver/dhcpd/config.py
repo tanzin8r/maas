@@ -252,6 +252,35 @@ def compose_conditional_bootloader(
     return output.strip()
 
 
+def _provision_option_name(code: int) -> str:
+    return f"provision-url-{code}"
+
+
+def compose_ztp_option_definitions(option_codes: set[int]) -> str:
+    """Return ISC dhcpd option definitions for provisioning URL options.
+
+    Emits ``option provision-url-<code> code <code> = text`` for each code.
+    """
+    option_codes_sorted = sorted(option_codes)
+    if not option_codes_sorted:
+        return ""
+    lines = []
+    for code in option_codes_sorted:
+        name = _provision_option_name(code)
+        lines.append(f"option {name} code {code} = text;")
+    return "\n".join(lines)
+
+
+def get_onie_dhcp_user_class() -> str:
+    """Return the DHCP user-class string used by ONIE (option 77).
+
+    Used to gate ZTP options so ONIE never receives ZTP provisioning and
+    ZTP-only clients can safely reuse any DHCP option code.
+    """
+    onie_method = BootMethodRegistry.get_item("onie")
+    return onie_method.user_class if onie_method else "onie_dhcp_user_class"
+
+
 @synchronous
 def _gen_addresses(hostname):
     """Yield IPv4 and IPv6 addresses for `hostname`.
@@ -408,15 +437,24 @@ def get_config_v4(
     failover_peers: Sequence[dict],
     shared_networks: Sequence[dict],
     hosts: Sequence[dict],
-    omapi_key: str,
-    running_in_snap: bool,
+    ztp_only_hosts: Sequence[dict] = (),
+    omapi_key: str = "",
+    running_in_snap: bool = False,
+    ztp_provisioning: str = "",
+    onie_user_class: str | None = None,
 ) -> str:
     """Return a DHCP config file based on the supplied parameters.
 
     :param template_name: Template file name: `dhcpd.conf.template` for the
         IPv4 template.
+    :param ztp_only_hosts: Optional host entries for ZTP (MAC-only).
+    :param ztp_provisioning: Optional option definitions for ZTP URL options.
+    :param onie_user_class: User-class string for ONIE (option 77). Defaults
+        from boot method registry.
     :return: A full configuration, as a string.
     """
+    if onie_user_class is None:
+        onie_user_class = get_onie_dhcp_user_class()
     template = load_template("dhcp", template_name)
     dhcp_socket = get_maas_data_path("dhcpd.sock")
 
@@ -439,11 +477,14 @@ def get_config_v4(
         return template.substitute(
             global_dhcp_snippets=global_dhcp_snippets,
             hosts=hosts,
+            ztp_only_hosts=ztp_only_hosts,
             failover_peers=failover_peers,
             shared_networks=shared_networks,
             omapi_key=omapi_key,
             dhcp_helper=(get_path("/usr/sbin/maas-dhcp-helper")),
             dhcp_socket=dhcp_socket,
+            ztp_provisioning=ztp_provisioning,
+            onie_user_class=onie_user_class,
             **helpers,
         )
     except (KeyError, NameError) as error:

@@ -6,6 +6,7 @@ from typing import Type
 from sqlalchemy import Table
 from sqlalchemy.sql.operators import eq
 
+from maasservicelayer.builders.switches import SwitchBuilder
 from maasservicelayer.db.filters import Clause, ClauseFactory
 from maasservicelayer.db.repositories.base import BaseRepository
 from maasservicelayer.db.tables import SwitchTable
@@ -22,6 +23,16 @@ class SwitchClauseFactory(ClauseFactory):
     @classmethod
     def with_ids(cls, ids: list[int]) -> Clause:
         return Clause(condition=SwitchTable.c.id.in_(ids))
+
+    @classmethod
+    def with_ztp_enabled(cls, enabled: bool) -> Clause:
+        return Clause(condition=eq(SwitchTable.c.ztp_enabled, enabled))
+
+    @classmethod
+    def with_ztp_script_token(cls, token: str) -> Clause:
+        return Clause(
+            condition=eq(SwitchTable.c.ztp_script_token, token)
+        )
 
 
 class SwitchesRepository(BaseRepository[Switch]):

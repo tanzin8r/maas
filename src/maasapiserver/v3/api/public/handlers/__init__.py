@@ -24,6 +24,7 @@ from maasapiserver.v3.api.public.handlers.files import FilesHandler
 from maasapiserver.v3.api.public.handlers.interfaces import InterfacesHandler
 from maasapiserver.v3.api.public.handlers.ipranges import IPRangesHandler
 from maasapiserver.v3.api.public.handlers.machines import MachinesHandler
+from maasapiserver.v3.api.public.handlers.nos import NosHandler
 from maasapiserver.v3.api.public.handlers.notifications import (
     NotificationsHandler,
 )
@@ -38,6 +39,7 @@ from maasapiserver.v3.api.public.handlers.resource_pools import (
 from maasapiserver.v3.api.public.handlers.root import RootHandler
 from maasapiserver.v3.api.public.handlers.spaces import SpacesHandler
 from maasapiserver.v3.api.public.handlers.sshkeys import SshKeysHandler
+from maasapiserver.v3.api.public.handlers.switches import SwitchesHandler
 from maasapiserver.v3.api.public.handlers.sslkeys import SSLKeysHandler
 from maasapiserver.v3.api.public.handlers.staticroutes import (
     StaticRoutesHandler,
@@ -70,6 +72,7 @@ APIv3 = API(
         InterfacesHandler(),
         IPRangesHandler(),
         MachinesHandler(),
+        NosHandler(),
         NotificationsHandler(),
         PackageRepositoriesHandler(),
         RacksHandler(),
@@ -81,6 +84,7 @@ APIv3 = API(
         SshKeysHandler(),
         SSLKeysHandler(),
         SubnetsHandler(),
+        SwitchesHandler(),
         TagsHandler(),
         UserGroupsHandler(),
         UsersHandler(),

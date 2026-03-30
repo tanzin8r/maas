@@ -4,7 +4,7 @@
 from abc import ABC
 from typing import Any, Type, TypeVar
 
-from sqlalchemy import Select, select, Table, update
+from sqlalchemy import or_, Select, select, Table, update
 from sqlalchemy.sql.operators import eq
 
 from maascommon.enums.node import NodeTypeEnum
@@ -35,6 +35,18 @@ class NodeClauseFactory(ClauseFactory):
     @classmethod
     def with_type(cls, value: NodeTypeEnum) -> Clause:
         return Clause(condition=eq(NodeTable.c.node_type, value))
+
+    @classmethod
+    def with_rack_controller_types(cls) -> Clause:
+        return Clause(
+            condition=or_(
+                eq(NodeTable.c.node_type, NodeTypeEnum.RACK_CONTROLLER),
+                eq(
+                    NodeTable.c.node_type,
+                    NodeTypeEnum.REGION_AND_RACK_CONTROLLER,
+                ),
+            )
+        )
 
     @classmethod
     def with_owner_id(cls, owner_id: int) -> Clause:

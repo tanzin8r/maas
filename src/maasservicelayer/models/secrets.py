@@ -99,6 +99,11 @@ class BMCPowerParametersSecret(SecretForObject):
     secret_name = "power-parameters"
 
 
+class SwitchZtpCredentialsSecret(SecretForObject):
+    prefix = "switch"
+    secret_name = "ztp-credentials"
+
+
 class Secret(BaseModel):
     created: datetime
     updated: datetime

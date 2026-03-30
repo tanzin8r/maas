@@ -2245,6 +2245,18 @@ SwitchTable = Table(
         ),
         nullable=True,
     ),
+    Column(
+        "ztp_enabled", Boolean, nullable=False, server_default=text("false")
+    ),
+    Column("ztp_script_key", String(36), nullable=True),
+    Column("ztp_option_code", Integer, nullable=True),
+    Column("mgmt_mac_address", String(17), nullable=True),
+    Column("installer_requested_at", DateTime(timezone=True), nullable=True),
+    Column("nos_install_status", String(20), nullable=True),
+    Column("nos_install_callback_token", String(64), nullable=True),
+    Column("ztp_started_at", DateTime(timezone=True), nullable=True),
+    Column("ztp_completed_at", DateTime(timezone=True), nullable=True),
+    Column("ztp_script_token", String(64), nullable=True),
     Index("maasserver_switch_target_image_id_idx", "target_image_id"),
 )
 

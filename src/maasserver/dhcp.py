@@ -8,14 +8,16 @@ from collections import defaultdict, namedtuple
 from itertools import groupby
 from operator import itemgetter
 import secrets
-from typing import Iterable, Optional, Union
+from typing import Any, Iterable, Optional, Union
 
 from django.db.models import Q
 from netaddr import IPAddress, IPNetwork
 
 from maascommon.workflows.dhcp import CONFIGURE_DHCP_WORKFLOW_NAME
+from maasserver.compose_preseed import RACK_CONTROLLER_PORT
 from maasserver.dhcpd.config import (
     compose_conditional_bootloader,
+    compose_ztp_option_definitions,
     get_config_v4,
     get_config_v6,
 )
@@ -37,8 +39,12 @@ from maasserver.models import (
 )
 from maasserver.models.subnet import get_boot_rackcontroller_ips
 from maasserver.secrets import SecretManager, SecretNotFound
+from maasserver.sqlalchemy import service_layer
 from maasserver.utils.orm import transactional
 from maasserver.workflow import start_workflow
+from maasservicelayer.db.filters import QuerySpec
+from maasservicelayer.db.repositories.interfaces import InterfaceClauseFactory
+from maasservicelayer.db.repositories.switches import SwitchClauseFactory
 from maastemporalworker.workflow.dhcp import ConfigureDHCPParam
 from provisioningserver.enum import CONTROLLER_INSTALL_TYPE
 from provisioningserver.logger import LegacyLogger
@@ -319,14 +325,41 @@ def make_dhcp_snippet(dhcp_snippet):
     }
 
 
+def _make_dhcp_host_entry(
+    host: str,
+    mac: str,
+    ip: str,
+    dhcp_snippets: list,
+    ztp_config_by_mac: dict,
+) -> dict:
+    """Build a single DHCP host entry, adding ztp_config when present."""
+    entry = {
+        "host": host,
+        "mac": mac,
+        "ip": ip,
+        "dhcp_snippets": dhcp_snippets,
+    }
+    mac_lower = str(mac).lower()
+    if mac_lower in ztp_config_by_mac:
+        entry["ztp_config"] = ztp_config_by_mac[mac_lower]
+    return entry
+
+
 def make_hosts_for_subnets(
-    subnets: list[Subnet], nodes_dhcp_snippets: list | None = None
+    subnets: list[Subnet],
+    nodes_dhcp_snippets: list | None = None,
+    rack_ip: str | None = None,
+    http_port: int = RACK_CONTROLLER_PORT,
 ) -> list[dict]:
     """Return list of host entries to create in the DHCP configuration for the
     given `subnets`.
     """
     if nodes_dhcp_snippets is None:
         nodes_dhcp_snippets = []
+
+    ztp_config_by_mac: dict[str, dict] = {}
+    if rack_ip:
+        ztp_config_by_mac = _get_ztp_config_by_mac(rack_ip, http_port)
 
     def get_dhcp_snippets_for_interface(interface):
         dhcp_snippets = list()
@@ -375,35 +408,32 @@ def make_hosts_for_subnets(
                     if parent.mac_address != interface.mac_address:
                         interface_ids.add(parent.id)
                         hosts.append(
-                            {
-                                "host": make_interface_hostname(parent),
-                                "mac": str(parent.mac_address),
-                                "ip": str(sip.ip),
-                                "dhcp_snippets": get_dhcp_snippets_for_interface(
-                                    parent
-                                ),
-                            }
+                            _make_dhcp_host_entry(
+                                make_interface_hostname(parent),
+                                str(parent.mac_address),
+                                str(sip.ip),
+                                get_dhcp_snippets_for_interface(parent),
+                                ztp_config_by_mac,
+                            )
                         )
                 hosts.append(
-                    {
-                        "host": make_interface_hostname(interface),
-                        "mac": str(interface.mac_address),
-                        "ip": str(sip.ip),
-                        "dhcp_snippets": get_dhcp_snippets_for_interface(
-                            interface
-                        ),
-                    }
+                    _make_dhcp_host_entry(
+                        make_interface_hostname(interface),
+                        str(interface.mac_address),
+                        str(sip.ip),
+                        get_dhcp_snippets_for_interface(interface),
+                        ztp_config_by_mac,
+                    )
                 )
             else:
                 hosts.append(
-                    {
-                        "host": make_interface_hostname(interface),
-                        "mac": str(interface.mac_address),
-                        "ip": str(sip.ip),
-                        "dhcp_snippets": get_dhcp_snippets_for_interface(
-                            interface
-                        ),
-                    }
+                    _make_dhcp_host_entry(
+                        make_interface_hostname(interface),
+                        str(interface.mac_address),
+                        str(sip.ip),
+                        get_dhcp_snippets_for_interface(interface),
+                        ztp_config_by_mac,
+                    )
                 )
 
     known_mac_addresses = [host["mac"] for host in hosts]
@@ -412,12 +442,13 @@ def make_hosts_for_subnets(
         # LP: #2110021: don't make a duplicated host entry if it already exists
         if reserved_ip.mac_address not in known_mac_addresses:
             hosts.append(
-                {
-                    "host": "rsvd-%d" % (reserved_ip.id),
-                    "mac": reserved_ip.mac_address,
-                    "ip": reserved_ip.ip,
-                    "dhcp_snippets": [],
-                }
+                _make_dhcp_host_entry(
+                    "rsvd-%d" % (reserved_ip.id),
+                    reserved_ip.mac_address,
+                    reserved_ip.ip,
+                    [],
+                    ztp_config_by_mac,
+                )
             )
 
     return hosts
@@ -731,8 +762,20 @@ def get_dhcp_configure_for(
             )
         )
 
+    rack_ip = None
+    if ip_version == 4:
+        for subnet_config in subnet_configs:
+            rack_ip = subnet_config.get("next_server")
+            if rack_ip:
+                break
+
     # Generate the hosts for all subnets.
-    hosts = make_hosts_for_subnets(subnets, nodes_dhcp_snippets)
+    hosts = make_hosts_for_subnets(
+        subnets,
+        nodes_dhcp_snippets,
+        rack_ip=rack_ip,
+        http_port=RACK_CONTROLLER_PORT,
+    )
     return (
         peer_config,
         sorted(subnet_configs, key=itemgetter("subnet")),
@@ -868,10 +911,38 @@ def get_dhcp_configuration(rack_controller, test_dhcp_snippet=None):
         shared_networks_v4 = {}
     if len(interfaces_v6) == 0:
         shared_networks_v6 = {}
+    ztp_only_hosts_v4 = []
+    first_rack_ip = None
+    for sn in shared_networks_v4:
+        for sub in sn.get("subnets", []):
+            ns = sub.get("next_server")
+            if ns:
+                first_rack_ip = ns
+                break
+        if first_rack_ip:
+            break
+    if first_rack_ip:
+        ztp_by_mac = _get_ztp_config_by_mac(
+            first_rack_ip, http_port=RACK_CONTROLLER_PORT
+        )
+        known_macs = {str(h["mac"]).lower() for h in hosts_v4}
+        for mac, cfg in ztp_by_mac.items():
+            if mac in known_macs:
+                continue
+            ztp_only_hosts_v4.append(
+                {
+                    "host": "ztp-" + mac.replace(":", "-"),
+                    "mac": mac,
+                    "dhcp_snippets": [],
+                    "ztp_config": cfg,
+                }
+            )
+
     return DHCPConfigurationForRack(
         failover_peers_v4,
         shared_networks_v4,
         hosts_v4,
+        ztp_only_hosts_v4,
         interfaces_v4,
         failover_peers_v6,
         shared_networks_v6,
@@ -888,6 +959,7 @@ DHCPConfigurationForRack = namedtuple(
         "failover_peers_v4",
         "shared_networks_v4",
         "hosts_v4",
+        "ztp_only_hosts_v4",
         "interfaces_v4",
         "failover_peers_v6",
         "shared_networks_v6",
@@ -897,6 +969,75 @@ DHCPConfigurationForRack = namedtuple(
         "global_dhcp_snippets",
     ),
 )
+
+
+def _get_ztp_config_by_mac(
+    rack_ip: str | None, http_port: int = RACK_CONTROLLER_PORT
+) -> dict[str, dict[str, Any]]:
+    """Return a map of MAC address to ZTP config (option_code, url) for DHCP."""
+    mac_to_config: dict[str, dict[str, Any]] = {}
+    try:
+        switches_result = service_layer.services.switches.get_many(
+            query=QuerySpec(where=SwitchClauseFactory.with_ztp_enabled(True))
+        )
+        if not switches_result:
+            return mac_to_config
+
+        switch_ids = []
+        switch_configs: dict[int, dict[str, Any]] = {}
+        for switch in switches_result:
+            if (
+                switch.ztp_enabled
+                and switch.ztp_script_key
+                and switch.ztp_option_code
+            ):
+                switch_ids.append(switch.id)
+                url = None
+                if rack_ip:
+                    token = switch.ztp_script_token or ""
+                    url = (
+                        f"http://{rack_ip}:{http_port}/MAAS/a/v3/"
+                        f"switches/ztp-script?token={token}"
+                    )
+                switch_configs[switch.id] = {
+                    "option_code": switch.ztp_option_code,
+                    "url": url,
+                }
+
+        if not switch_ids:
+            return mac_to_config
+
+        all_interfaces = service_layer.services.interfaces.get_many(
+            query=QuerySpec(
+                where=InterfaceClauseFactory.with_switch_id_in(switch_ids)
+            )
+        )
+
+        if all_interfaces:
+            for interface in all_interfaces:
+                switch_id = interface.switch_id
+                if switch_id and switch_id in switch_configs:
+                    mac = str(interface.mac_address).lower()
+                    mac_to_config[mac] = switch_configs[switch_id]
+
+    except Exception as e:
+        log.warn("Failed to load ZTP switch config: %s", e)
+
+    return mac_to_config
+
+
+def _collect_ztp_option_codes(config):
+    """Return set of ZTP option codes from config hosts and ztp_only_hosts."""
+    codes = set()
+    for host in config.hosts_v4:
+        ztp = host.get("ztp_config")
+        if ztp and ztp.get("option_code") is not None:
+            codes.add(ztp["option_code"])
+    for host in config.ztp_only_hosts_v4:
+        ztp = host.get("ztp_config")
+        if ztp and ztp.get("option_code") is not None:
+            codes.add(ztp["option_code"])
+    return codes
 
 
 def generate_dhcp_configuration(rack_controller):
@@ -913,6 +1054,10 @@ def generate_dhcp_configuration(rack_controller):
         rack_controller.info.install_type == CONTROLLER_INSTALL_TYPE.SNAP
     )
 
+    ztp_provisioning = compose_ztp_option_definitions(
+        _collect_ztp_option_codes(config)
+    )
+
     result["dhcpd"] = base64.b64encode(
         get_config_v4(
             template_name="dhcpd.conf.template",
@@ -920,8 +1065,10 @@ def generate_dhcp_configuration(rack_controller):
             failover_peers=config.failover_peers_v4,
             shared_networks=config.shared_networks_v4,
             hosts=config.hosts_v4,
+            ztp_only_hosts=config.ztp_only_hosts_v4,
             omapi_key=config.omapi_key,
             running_in_snap=running_in_snap,
+            ztp_provisioning=ztp_provisioning,
         ).encode("utf-8")
     ).decode("utf-8")
 

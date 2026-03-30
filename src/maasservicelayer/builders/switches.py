@@ -2,7 +2,7 @@
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
 from datetime import datetime
-from typing import Union
+from typing import Optional, Union
 
 from pydantic import Field
 
@@ -21,3 +21,31 @@ class SwitchBuilder(ResourceBuilder):
         default=UNSET, required=False
     )
     updated: Union[datetime, Unset] = Field(default=UNSET, required=False)
+    ztp_enabled: Union[bool, Unset] = Field(default=UNSET, required=False)
+    ztp_option_code: Union[int, None, Unset] = Field(
+        default=UNSET, required=False
+    )
+    ztp_script_key: Union[str, None, Unset] = Field(
+        default=UNSET, required=False
+    )
+    mgmt_mac_address: Union[str, None, Unset] = Field(
+        default=UNSET, required=False
+    )
+    installer_requested_at: Union[datetime, None, Unset] = Field(
+        default=UNSET, required=False
+    )
+    nos_install_status: Union[str, None, Unset] = Field(
+        default=UNSET, required=False
+    )
+    nos_install_callback_token: Union[str, None, Unset] = Field(
+        default=UNSET, required=False
+    )
+    ztp_started_at: Union[datetime, None, Unset] = Field(
+        default=UNSET, required=False
+    )
+    ztp_completed_at: Union[datetime, None, Unset] = Field(
+        default=UNSET, required=False
+    )
+    ztp_script_token: Union[str, None, Unset] = Field(
+        default=UNSET, required=False
+    )

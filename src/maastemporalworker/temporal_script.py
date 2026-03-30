@@ -62,6 +62,10 @@ from maastemporalworker.workflow.power import (
     PowerQueryWorkflow,
     PowerResetWorkflow,
 )
+from maastemporalworker.workflow.switch_ztp import (
+    SwitchZtpActivity,
+    VerifySwitchZtpWorkflow,
+)
 from maastemporalworker.workflow.tag_evaluation import (
     TagEvaluationActivity,
     TagEvaluationWorkflow,
@@ -153,6 +157,7 @@ async def main() -> None:
     tag_evaluation_activity = TagEvaluationActivity(
         db, services_cache, temporal_client
     )
+    switch_ztp_activity = SwitchZtpActivity(db, services_cache, temporal_client)
     deploy_activity = DeployActivity(db, services_cache, temporal_client)
     dhcp_activity = DHCPConfigActivity(db, services_cache, temporal_client)
     power_activity = PowerActivity(db, services_cache, temporal_client)
@@ -197,6 +202,7 @@ async def main() -> None:
                 PowerResetWorkflow,
                 # Tag Evaluation workflows
                 TagEvaluationWorkflow,
+                VerifySwitchZtpWorkflow,
             ],
             activities=[
                 # Boot resources activities
@@ -238,6 +244,7 @@ async def main() -> None:
                 msm_activity.restore_default_boot_source,
                 # Tag evaluation activities
                 tag_evaluation_activity.evaluate_tag,
+                switch_ztp_activity.verify_switch_ztp_ssh,
                 # Power state activities
                 power_activity.set_power_state,
             ],
